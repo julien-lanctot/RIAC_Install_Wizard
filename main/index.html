@@ -20,6 +20,7 @@
     <button id="connectButton">Connect to Device</button>
     <textarea id="jsonInput" placeholder="Enter JSON to send" rows="4" cols="50"></textarea>
     <button id="sendButton">Send</button>
+    <button id="wifiButton">WiFi Scan</button>
     <pre id="output"></pre>
 
     <script>
@@ -207,7 +208,8 @@
 
 
         document.getElementById("connectButton").addEventListener("click", USBconnect);
-        document.getElementById("sendButton").addEventListener("click", connectionWizard);
+        document.getElementById("sendButton").addEventListener("click", sendMessage);
+        document.getElementById("wifiButton").addEventListener("click", connectionWizard);
     </script>
 </body>
 </html>
