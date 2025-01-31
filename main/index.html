@@ -1,165 +1,213 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WebSerial JSON Parser</title>
     <style>
-      #output {
-        background-color: black;
-        color: lime;
-        font-family: monospace;
-        padding: 10px;
-        height: 200px;
-        overflow-y: auto;
-        border: 1px solid lime;
-      }
+        #output {
+            background-color: black;
+            color: lime;
+            font-family: monospace;
+            padding: 10px;
+            height: 200px;
+            overflow-y: auto;
+            border: 1px solid lime;
+        }
     </style>
-  </head>
-  <body>
+</head>
+<body>
     <button id="connectButton">Connect to Device</button>
-    <textarea
-      id="jsonInput"
-      placeholder="Enter JSON to send"
-      rows="4"
-      cols="50"
-    ></textarea>
+    <textarea id="jsonInput" placeholder="Enter JSON to send" rows="4" cols="50"></textarea>
     <button id="sendButton">Send</button>
     <pre id="output"></pre>
 
     <script>
-      var escapable =
-        /[\x00-\x1f\ud800-\udfff\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufff0-\uffff]/g;
-      let outputStream, inputStream;
-      var USB;
+        var escapable = /[\x00-\x1f\ud800-\udfff\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufff0-\uffff]/g;
+        let outputStream, inputStream;
+        let inputDone, outputDone;
+        var USB;
+        var ebUSB;
 
-      async function USBconnect() {
-        // Request & open port here.
-        port = await navigator.serial.requestPort();
-        // Wait for the port to open.
-        await port.open({ baudRate: 230400 });
-        // on disconnect, alert user and pause Snap!
-        port.addEventListener("disconnect", (event) => {});
 
-        // Setup the output stream
-        const encoder = new TextEncoderStream();
-        outputDone = encoder.readable.pipeTo(port.writable);
-        outputStream = encoder.writable;
+        function filterUnicode(quoted){
 
-        // Make stream
-        let decoder = new TextDecoderStream();
-        inputDone = port.readable.pipeTo(decoder.writable);
-        inputStream = decoder.readable;
+          escapable.lastIndex = 0;
+          if( !escapable.test(quoted)) return quoted;
 
-        reader = inputStream.getReader();
-        readLoop(); // Start infinite read loop
-      }
+          return quoted.replace( escapable, function(a){
+            return '';
+          });
+        }
 
-      /**
-       * This reads from the serial in a loop, and
-       * runs the given callbacks (using ebUSB).
-       */
-      async function readLoop() {
-        USB = "";
-        console.log("USB Reader Listening...");
 
-        while (true) {
-          const { value, done } = await reader.read();
-          if (value) {
-            USB += value;
-            console.log(value + "\n");
+        var EveBrainUSB = function() {
+          this.cbs = {};
+          // Initially, set connected to true if there is a port.
+          if (port) {
+            this.connected = true;
+          } else {
+            this.connected = false;
+          }
+        };
 
-            // Now, I check if the JSON is complete and respond to the callback if necessary
-            // and remove the message from the stack
-            if (USB.includes("}")) {
-              var messages = tryParseeBrainResponse(USB);
-              displayMessage(USB);
-              /*for (var i = 0; i < messages.parsed.length; i++ ) {
+        EveBrainUSB.prototype = {
+             send_msg: function(message, callback) {
+              message = filterUnicode(message);
+              writeToStream(JSON.stringify(message));
+              this.cbs = callback;
+            },
+
+            doCallback: function(message) {
+                this.cbs(message);
+            }
+        }
+
+
+        async function USBconnect() {
+          // Request & open port here.
+          port = await navigator.serial.requestPort();
+
+          if (ebUSB) {
+            ebUSB.connected = true;
+          }
+          // Wait for the port to open.
+          await port.open({ baudRate: 230400 });
+          // on disconnect, alert user and pause Snap!
+          port.addEventListener('disconnect', event => {
+            if (ebUSB) {
+              ebUSB.connected = false; // signal disconnection to other code.
+            }
+          });
+
+          // Setup the output stream
+          const encoder = new TextEncoderStream();
+          outputDone = encoder.readable.pipeTo(port.writable);
+          outputStream = encoder.writable;
+
+          // Make stream
+          let decoder = new TextDecoderStream();
+          inputDone = port.readable.pipeTo(decoder.writable);
+          inputStream = decoder.readable;
+
+          reader = inputStream.getReader();
+          readLoop(); // Start infinite read loop
+        }
+
+
+
+
+        /**
+         * This reads from the serial in a loop, and 
+         * runs the given callbacks (using ebUSB).
+         */
+        async function readLoop() {
+          USB = '';
+          console.log("USB Reader Listening...");
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (value) {
+              USB += value;
+              console.log (value + '\n');
+
+              // Now, I check if the JSON is complete and respond to the callback if necessary
+              // and remove the message from the stack
+              if (USB.includes('}')) {
+                var messages = tryParseeBrainResponse(USB);
+                displayMessage(USB);
+                for (var i = 0; i < messages.parsed.length; i++ ) {
                   var message = messages.parsed[i];
                   if (ebUSB) {
                     ebUSB.doCallback(message);
                   }
-                }*/
-              USB = "";
-              if (messages.unparseable) {
-                USB = messages.unparseable;
+                }
+                USB = '';
+                if (messages.unparseable) {
+                  USB = messages.unparseable;
+                }
+              }
+            }
+            if (done) {
+              console.log('[readLoop] DONE', done);
+              reader.releaseLock();
+              break;
+            }
+          }
+        }
+
+        function writeToStream(...lines) {
+          // Write to output stream
+          const writer = outputStream.getWriter();
+          lines.forEach((line) => {
+            console.log('[SEND]', line);
+            writer.write(line + '\n');
+          });
+          writer.releaseLock();
+        }
+
+
+        function tryParseeBrainResponse(jsonString) {
+          var out = {parsed: []};
+
+          // First, try and split if there are multiple objects being returned
+          var jsons = jsonString.split('\r\n');
+          for (var i = 0; i < jsons.length; i++) {
+            try {
+              var response = JSON.parse(jsons[i]);
+              if (response && typeof response === "object" && response.id) {
+                out.parsed.push(response);
+              }
+            } catch (e) {
+              // Only add a str to unparseable if it's at the end.
+              if (i == jsons.length - 1) {
+                out.unparseable = jsons[i];
               }
             }
           }
-          if (done) {
-            console.log("[readLoop] DONE", done);
-            reader.releaseLock();
-            break;
-          }
-        }
-      }
-
-      function displayMessage(data) {
-        document.getElementById("output").textContent +=
-          JSON.stringify(data, null, 2) + "\n";
-      }
-
-      async function sendMessage() {
-        if (!outputStream) {
-          console.error("No serial connection established.");
-          return;
+          return out;
         }
 
-        try {
-          const jsonInput = document.getElementById("jsonInput").value;
-          message = filterUnicode(jsonInput);
-          writeToStream(JSON.stringify(JSON.parse(jsonInput)));
-        } catch (err) {
-          console.error("Invalid JSON format:", err);
+
+
+
+
+
+
+
+
+
+
+        function displayMessage(data) {
+            document.getElementById("output").textContent += JSON.stringify(data, null, 2) + "\n";
         }
-      }
 
-      function writeToStream(...lines) {
-        // Write to output stream
-        const writer = outputStream.getWriter();
-        lines.forEach((line) => {
-          console.log("[SEND]", line);
-          writer.write(line + "\n");
-        });
-        writer.releaseLock();
-      }
-
-      function tryParseeBrainResponse(jsonString) {
-        var out = { parsed: [] };
-
-        // First, try and split if there are multiple objects being returned
-        var jsons = jsonString.split("\r\n");
-        for (var i = 0; i < jsons.length; i++) {
-          try {
-            var response = JSON.parse(jsons[i]);
-            if (response && typeof response === "object" && response.id) {
-              out.parsed.push(response);
+        async function sendMessage() {
+            if (!outputStream) {
+                console.error("No serial connection established.");
+                return;
             }
-          } catch (e) {
-            // Only add a str to unparseable if it's at the end.
-            if (i == jsons.length - 1) {
-              out.unparseable = jsons[i];
+            
+            try {
+               const jsonInput = document.getElementById("jsonInput").value;
+               message = filterUnicode(jsonInput);
+               writeToStream(JSON.stringify(JSON.parse(jsonInput)));
+            } catch (err) {
+                console.error("Invalid JSON format:", err);
             }
-          }
         }
-        return out;
-      }
 
-      function filterUnicode(quoted) {
-        escapable.lastIndex = 0;
-        if (!escapable.test(quoted)) return quoted;
 
-        return quoted.replace(escapable, function (a) {
-          return "";
-        });
-      }
+        function connectionWizard() {
+            ebUSB = new EveBrainUSB();
 
-      document
-        .getElementById("connectButton")
-        .addEventListener("click", USBconnect);
-      document
-        .getElementById("sendButton")
-        .addEventListener("click", sendMessage);
+            //JSON Command, Function to do on successful completion (where rtnMsg is the returned message of the complete command)
+            ebUSB.send_msg({"cmd": "startWifiScan"},function(rtnMsg){alert("networks: " + rtnMsg.msg);})
+        }
+
+
+        document.getElementById("connectButton").addEventListener("click", USBconnect);
+        document.getElementById("sendButton").addEventListener("click", connectionWizard);
     </script>
-  </body>
+</body>
 </html>
