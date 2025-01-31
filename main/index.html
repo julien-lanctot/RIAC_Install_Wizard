@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebSerial JSON Parser</title>
+    <style>
+      #output {
+        background-color: black;
+        color: lime;
+        font-family: monospace;
+        padding: 10px;
+        height: 200px;
+        overflow-y: auto;
+        border: 1px solid lime;
+      }
+    </style>
+  </head>
+  <body>
+    <button id="connectButton">Connect to Device</button>
+    <textarea
+      id="jsonInput"
+      placeholder="Enter JSON to send"
+      rows="4"
+      cols="50"
+    ></textarea>
+    <button id="sendButton">Send</button>
+    <pre id="output"></pre>
+
+    <script>
+      var escapable =
+        /[\x00-\x1f\ud800-\udfff\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufff0-\uffff]/g;
+      let outputStream, inputStream;
+      var USB;
+
+      async function USBconnect() {
+        // Request & open port here.
+        port = await navigator.serial.requestPort();
+        // Wait for the port to open.
+        await port.open({ baudRate: 230400 });
+        // on disconnect, alert user and pause Snap!
+        port.addEventListener("disconnect", (event) => {});
+
+        // Setup the output stream
+        const encoder = new TextEncoderStream();
+        outputDone = encoder.readable.pipeTo(port.writable);
+        outputStream = encoder.writable;
+
+        // Make stream
+        let decoder = new TextDecoderStream();
+        inputDone = port.readable.pipeTo(decoder.writable);
+        inputStream = decoder.readable;
+
+        reader = inputStream.getReader();
+        readLoop(); // Start infinite read loop
+      }
+
+      /**
+       * This reads from the serial in a loop, and
+       * runs the given callbacks (using ebUSB).
+       */
+      async function readLoop() {
+        USB = "";
+        console.log("USB Reader Listening...");
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (value) {
+            USB += value;
+            console.log(value + "\n");
+
+            // Now, I check if the JSON is complete and respond to the callback if necessary
+            // and remove the message from the stack
+            if (USB.includes("}")) {
+              var messages = tryParseeBrainResponse(USB);
+              displayMessage(USB);
+              /*for (var i = 0; i < messages.parsed.length; i++ ) {
+                  var message = messages.parsed[i];
+                  if (ebUSB) {
+                    ebUSB.doCallback(message);
+                  }
+                }*/
+              USB = "";
+              if (messages.unparseable) {
+                USB = messages.unparseable;
+              }
+            }
+          }
+          if (done) {
+            console.log("[readLoop] DONE", done);
+            reader.releaseLock();
+            break;
+          }
+        }
+      }
+
+      function displayMessage(data) {
+        document.getElementById("output").textContent +=
+          JSON.stringify(data, null, 2) + "\n";
+      }
+
+      async function sendMessage() {
+        if (!outputStream) {
+          console.error("No serial connection established.");
+          return;
+        }
+
+        try {
+          const jsonInput = document.getElementById("jsonInput").value;
+          message = filterUnicode(jsonInput);
+          writeToStream(JSON.stringify(JSON.parse(jsonInput)));
+        } catch (err) {
+          console.error("Invalid JSON format:", err);
+        }
+      }
+
+      function writeToStream(...lines) {
+        // Write to output stream
+        const writer = outputStream.getWriter();
+        lines.forEach((line) => {
+          console.log("[SEND]", line);
+          writer.write(line + "\n");
+        });
+        writer.releaseLock();
+      }
+
+      function tryParseeBrainResponse(jsonString) {
+        var out = { parsed: [] };
+
+        // First, try and split if there are multiple objects being returned
+        var jsons = jsonString.split("\r\n");
+        for (var i = 0; i < jsons.length; i++) {
+          try {
+            var response = JSON.parse(jsons[i]);
+            if (response && typeof response === "object" && response.id) {
+              out.parsed.push(response);
+            }
+          } catch (e) {
+            // Only add a str to unparseable if it's at the end.
+            if (i == jsons.length - 1) {
+              out.unparseable = jsons[i];
+            }
+          }
+        }
+        return out;
+      }
+
+      function filterUnicode(quoted) {
+        escapable.lastIndex = 0;
+        if (!escapable.test(quoted)) return quoted;
+
+        return quoted.replace(escapable, function (a) {
+          return "";
+        });
+      }
+
+      document
+        .getElementById("connectButton")
+        .addEventListener("click", USBconnect);
+      document
+        .getElementById("sendButton")
+        .addEventListener("click", sendMessage);
+    </script>
+  </body>
+</html>
