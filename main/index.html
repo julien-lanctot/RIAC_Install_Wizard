@@ -17,11 +17,24 @@
     </style>
 </head>
 <body>
-    <button id="connectButton">Connect to Device</button>
+    <br><br>
+    <button id="connectButton">Connect to Device</button><br><br>
+    <button id="wifichkButton">Scan WiFi</button><br><br>
+    
+    <label for="ssid">SSID:</label>
+    <select name="ssid" id="ssid">
+    </select>
+    <label for="pass">PASS:</label>
+    <input type="text" id="pass" name="pass">
+    <br>
+    <button id="wifiButton">Connect To Router & Get IP</button>
+    <h1 id="ip"></h1>
+
+    <br><br><br>
     <textarea id="jsonInput" placeholder="Enter JSON to send" rows="4" cols="50"></textarea>
     <button id="sendButton">Send</button>
-    <button id="wifiButton">WiFi Scan</button>
     <pre id="output"></pre>
+    <br><br>
 
     <script>
         var escapable = /[\x00-\x1f\ud800-\udfff\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufff0-\uffff]/g;
@@ -29,6 +42,7 @@
         let inputDone, outputDone;
         var USB;
         var ebUSB;
+        var port;
 
 
         function filterUnicode(quoted){
@@ -183,6 +197,10 @@
             document.getElementById("output").textContent += JSON.stringify(data, null, 2) + "\n";
         }
 
+        function displayIP(ip) {
+            document.getElementById("ip").innerHTML = ip;
+        }
+
         async function sendMessage() {
             if (!outputStream) {
                 console.error("No serial connection established.");
@@ -200,14 +218,34 @@
 
 
         function connectionWizard() {
-            ebUSB = new EveBrainUSB();
+            const ssid = document.getElementById("ssid").value;
+            const pass = document.getElementById("pass").value;
+            var message = {"cmd": "setConfig", "arg": {"sta_ssid": "AlchemistRefuge", "sta_pass": "thisistheinternetpassword"}};
 
+            ebUSB = new EveBrainUSB();
             //JSON Command, Function to do on successful completion (where rtnMsg is the returned message of the complete command)
-            ebUSB.send_msg({"cmd": "startWifiScan"},function(rtnMsg){alert("networks: " + rtnMsg.msg);})
+            ebUSB.send_msg(message, function(rtnMsg){
+                displayIP(rtnMsg.msg.sta_ip);
+            });
+        }
+
+
+        function wifiCheck() {
+            ebUSB = new EveBrainUSB();
+            ebUSB.send_msg({"cmd": "startWifiScan"}, function(rtnMsg){
+                var wifi = "";
+                for(var i = 0; i < rtnMsg.msg.length; i++) {
+                    wifi += "<option value ='" + rtnMsg.msg[i][0] + "' >";
+                    wifi += rtnMsg.msg[i][0];
+                    wifi += "</option>";
+                }
+                document.getElementById("ssid").innerHTML = wifi;
+            });
         }
 
 
         document.getElementById("connectButton").addEventListener("click", USBconnect);
+        document.getElementById("wifichkButton").addEventListener("click", wifiCheck);
         document.getElementById("sendButton").addEventListener("click", sendMessage);
         document.getElementById("wifiButton").addEventListener("click", connectionWizard);
     </script>
