@@ -18,22 +18,23 @@
 </head>
 <body>
     <br><br>
-    <button id="connectButton">Connect to Device</button><br><br>
+    <button id="connectButton">Connect to Device</button><br><br><br>
     <button id="wifichkButton">Scan WiFi</button><br><br>
     
     <label for="ssid">SSID:</label>
     <select name="ssid" id="ssid">
     </select>
+    <br>
     <label for="pass">PASS:</label>
     <input type="text" id="pass" name="pass">
-    <br>
+    <br><br>
     <button id="wifiButton">Connect To Router & Get IP</button>
     <h1 id="ip"></h1>
 
-    <br><br><br>
-    <textarea id="jsonInput" placeholder="Enter JSON to send" rows="4" cols="50"></textarea>
-    <button id="sendButton">Send</button>
+    <br><br>
     <pre id="output"></pre>
+    <textarea id="jsonInput" placeholder="Enter JSON to send" rows="2" cols="80"></textarea>
+    <button id="sendButton">Send</button>
     <br><br>
 
     <script>
