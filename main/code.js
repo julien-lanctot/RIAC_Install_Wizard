@@ -279,15 +279,28 @@ function sendJsonText() {
   eb.send_msg(jsonInput, function (rtnMsg) {});
 }
 
-function GPIOON() {
+function GPIO_ON() {
+  pinOn = document.getElementById("pinOn").value;
   var message = {
     cmd: "gpio_on",
-    arg: 4,
+    arg: pinOn,
+  };
+  //JSON Command, Function to do on successful completion (where rtnMsg is the returned message of the complete command)
+  eb.send_msg(message, function (rtnMsg) {
+    console.log("GPIO Turned on");
+  });
+}
+
+function GPIO_OFF() {
+  pinOff = document.getElementById("pinOff").value;
+  var message = {
+    cmd: "gpio_off",
+    arg: pinOff,
   };
   console.log(message);
   //JSON Command, Function to do on successful completion (where rtnMsg is the returned message of the complete command)
   eb.send_msg(message, function (rtnMsg) {
-    console.log(rtnMsg);
+    console.log("GPIO Turned off");
   });
 }
 
@@ -300,4 +313,5 @@ document
   .addEventListener("click", connectionWizard);
 document.getElementById("socketButton").addEventListener("click", connectWS);
 document.getElementById("ipButton").addEventListener("click", getIP);
-document.getElementById("GPIOON").addEventListener("click", GPIOON);
+document.getElementById("GPIO_ON").addEventListener("click", GPIO_ON);
+document.getElementById("GPIO_OFF").addEventListener("click", GPIO_OFF);
