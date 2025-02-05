@@ -297,6 +297,7 @@ function GPIO_OFF() {
     cmd: "gpio_off",
     arg: pinOff,
   };
+
   console.log(message);
   //JSON Command, Function to do on successful completion (where rtnMsg is the returned message of the complete command)
   eb.send_msg(message, function (rtnMsg) {
