@@ -18,7 +18,7 @@
 </head>
 <body>
     <br><br>
-    <button id="connectButton">Connect to Device</button><br><br><br>
+    <button id="connectButton">Connect to Device USB</button><br><br><br>
     <button id="wifichkButton">Scan WiFi</button><br><br>
     
     <label for="ssid">SSID:</label>
@@ -28,22 +28,29 @@
     <label for="pass">PASS:</label>
     <input type="text" id="pass" name="pass">
     <br><br>
-    <button id="wifiButton">Connect To Router & Get IP</button>
+    <button id="wifiButton">Connect To Router</button>
     <h1 id="ip"></h1>
+    <button id="ipButton">Get IP</button><br><br>
+    <button id="socketButton">Connect To eBrain WebSocket</button>
 
     <br><br>
     <pre id="output"></pre>
     <textarea id="jsonInput" placeholder="Enter JSON to send" rows="2" cols="80"></textarea>
     <button id="sendButton">Send</button>
     <br><br>
+    <button id="connectButton">Reflash Firmware USB</button><br><br>
 
     <script>
         var escapable = /[\x00-\x1f\ud800-\udfff\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufff0-\uffff]/g;
         let outputStream, inputStream;
         let inputDone, outputDone;
-        var USB;
-        var ebUSB;
+        var eb;
         var port;
+        let socket;
+        let reconnectInterval = 3000; // 3 seconds
+        let maxRetries = 5;
+        let retryCount = 0;
+
 
 
         function filterUnicode(quoted){
@@ -57,7 +64,7 @@
         }
 
 
-        var EveBrainUSB = function() {
+        var EveBrain = function() {
           this.cbs = {};
           // Initially, set connected to true if there is a port.
           if (port) {
@@ -67,15 +74,39 @@
           }
         };
 
-        EveBrainUSB.prototype = {
+        EveBrain.prototype = {
              send_msg: function(message, callback) {
-              message = filterUnicode(message);
-              writeToStream(JSON.stringify(message));
-              this.cbs = callback;
+              message.id = Math.random().toString(36).substring(2, 12);
+
+              //set the callback function to run when message recieves a reply
+              if (callback) {
+                this.cbs[message.id] = callback;
+              }
+
+              //check how message is formed and turn into json string
+              if (!(message instanceof Object)) {
+                message = JSON.stringify(JSON.parse(message));
+              } else {
+                message = JSON.stringify(message);
+              }
+
+              //Check USB or WS connection, favor WS, and send appropriatley
+              if(socket && socket.readyState === WebSocket.OPEN) {
+                sendDataWS(message);
+              } else {
+                sendDataUSB(message);
+              }          
             },
 
             doCallback: function(message) {
-                this.cbs(message);
+                //run the callback
+                if(!(typeof message.id === "undefined")){
+                  try {
+                    this.cbs[message.id](message);
+                  } catch (e) {
+                  }
+                }
+                
             }
         }
 
@@ -84,15 +115,15 @@
           // Request & open port here.
           port = await navigator.serial.requestPort();
 
-          if (ebUSB) {
-            ebUSB.connected = true;
+          if (eb) {
+            eb.connected = true;
           }
           // Wait for the port to open.
           await port.open({ baudRate: 230400 });
           // on disconnect, alert user and pause Snap!
           port.addEventListener('disconnect', event => {
-            if (ebUSB) {
-              ebUSB.connected = false; // signal disconnection to other code.
+            if (eb) {
+              eb.connected = false; // signal disconnection to other code.
             }
           });
 
@@ -118,39 +149,45 @@
          * runs the given callbacks (using ebUSB).
          */
         async function readLoop() {
-          USB = '';
+          let buffer = "";
           console.log("USB Reader Listening...");
 
           while (true) {
-            const { value, done } = await reader.read();
-            if (value) {
-              USB += value;
-              console.log (value + '\n');
-
-              // Now, I check if the JSON is complete and respond to the callback if necessary
-              // and remove the message from the stack
-              if (USB.includes('}')) {
-                var messages = tryParseeBrainResponse(USB);
-                displayMessage(USB);
-                for (var i = 0; i < messages.parsed.length; i++ ) {
-                  var message = messages.parsed[i];
-                  if (ebUSB) {
-                    ebUSB.doCallback(message);
-                  }
-                }
-                USB = '';
-                if (messages.unparseable) {
-                  USB = messages.unparseable;
-                }
+              const { value, done } = await reader.read();
+              if (done) {
+                  console.log("[readLoop] DONE");
+                  reader.releaseLock();
+                  break;
               }
-            }
-            if (done) {
-              console.log('[readLoop] DONE', done);
-              reader.releaseLock();
-              break;
-            }
+              
+              buffer += value;
+              console.log(value + '\n');
+
+              let messages = { parsed: [] };
+              let jsons = buffer.split('\r\n');
+              
+              buffer = jsons.pop(); // Keep potential incomplete JSON
+              
+              for (let json of jsons) {
+                  try {
+                      let response = JSON.parse(json);
+                      if (response && typeof response === "object") {
+                          messages.parsed.push(response);
+                      }
+                  } catch (e) {
+                      console.error("Failed to parse JSON:", e);
+                  }
+              }
+              
+              messages.parsed.forEach(message => {
+                  displayMessage(JSON.stringify(message));
+                  if (typeof eb !== "undefined") {
+                      eb.doCallback(message);
+                  }
+              });
           }
-        }
+      }
+
 
         function writeToStream(...lines) {
           // Write to output stream
@@ -162,26 +199,70 @@
           writer.releaseLock();
         }
 
-
-        function tryParseeBrainResponse(jsonString) {
-          var out = {parsed: []};
-
-          // First, try and split if there are multiple objects being returned
-          var jsons = jsonString.split('\r\n');
-          for (var i = 0; i < jsons.length; i++) {
-            try {
-              var response = JSON.parse(jsons[i]);
-              if (response && typeof response === "object" && response.id) {
-                out.parsed.push(response);
-              }
-            } catch (e) {
-              // Only add a str to unparseable if it's at the end.
-              if (i == jsons.length - 1) {
-                out.unparseable = jsons[i];
-              }
+        async function sendDataUSB(msg) {
+            if (!outputStream) {
+                console.error("No serial connection established.");
+                return;
             }
-          }
-          return out;
+            try {
+               message = filterUnicode(msg);
+               writeToStream(message);
+            } catch (err) {
+                console.error("Invalid JSON format:", err);
+            }
+        }
+
+
+        async function sendDataWS(data) {
+            message = filterUnicode(data);
+            if (socket && socket.readyState === WebSocket.OPEN) {
+              try {
+                socket.send(message);
+                displayMessage("Data sent:", data);
+              } catch (err) {
+                console.error("Invalid JSON format:", err);
+              }
+            } else {
+                displayMessage("Cannot send data, WebSocket is not open.");
+            }
+        }
+
+
+        function connect(url) {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                displayMessage("Already connected.");
+                return;
+            }
+
+            console.log("Attempting to connect to ESP8266 WebSocket...");
+            socket = new WebSocket(url);
+
+            socket.onopen = function () {
+                displayMessage("Connected to ESP8266 WebSocket");
+                retryCount = 0; // Reset retry count on successful connection
+            };
+
+            socket.onmessage = function (event) {
+                displayMessage("Message from ESP8266: " + event.data);
+                if (typeof eb !== "undefined") {
+                    eb.doCallback(event.data);
+                }
+            };
+
+            socket.onerror = function (error) {
+                displayMessage("WebSocket error: " + error);
+            };
+
+            socket.onclose = function (event) {
+                displayMessage("WebSocket closed: " + event);
+                if (retryCount < maxRetries) {
+                    retryCount++;
+                    displayMessage(`Reconnecting in ${reconnectInterval / 1000} seconds... (Attempt ${retryCount}/${maxRetries})`);
+                    setTimeout(() => connect(url), reconnectInterval);
+                } else {
+                    displayMessage("Max reconnect attempts reached. Manual reconnection required.");
+                }
+            };
         }
 
 
@@ -195,46 +276,43 @@
 
 
         function displayMessage(data) {
-            document.getElementById("output").textContent += JSON.stringify(data, null, 2) + "\n";
+            document.getElementById("output").textContent += data+"\n";
         }
 
         function displayIP(ip) {
             document.getElementById("ip").innerHTML = ip;
         }
 
-        async function sendMessage() {
-            if (!outputStream) {
-                console.error("No serial connection established.");
-                return;
-            }
-            
-            try {
-               const jsonInput = document.getElementById("jsonInput").value;
-               message = filterUnicode(jsonInput);
-               writeToStream(JSON.stringify(JSON.parse(jsonInput)));
-            } catch (err) {
-                console.error("Invalid JSON format:", err);
-            }
+        function getDisplayIP() {
+            return document.getElementById("ip").innerHTML;
+        }
+
+        function getIP() {
+            var message = {"cmd": "getConfig"};
+            //JSON Command, Function to do on successful completion (where rtnMsg is the returned message of the complete command)
+            eb.send_msg(message, function(rtnMsg){
+                displayIP(rtnMsg.msg.sta_ip);
+            });
         }
 
 
         function connectionWizard() {
             const ssid = document.getElementById("ssid").value;
             const pass = document.getElementById("pass").value;
-            var message = {"cmd": "setConfig", "arg": {"sta_ssid": "AlchemistRefuge", "sta_pass": "thisistheinternetpassword"}};
-
-            ebUSB = new EveBrainUSB();
+            var message = {"cmd": "setConfig", "arg": {"sta_ssid": ssid , "sta_pass": pass}};
             //JSON Command, Function to do on successful completion (where rtnMsg is the returned message of the complete command)
-            ebUSB.send_msg(message, function(rtnMsg){
+            eb.send_msg(message, function(rtnMsg){
                 displayIP(rtnMsg.msg.sta_ip);
             });
         }
 
 
         function wifiCheck() {
-            ebUSB = new EveBrainUSB();
-            ebUSB.send_msg({"cmd": "startWifiScan"}, function(rtnMsg){
+            eb.send_msg({"cmd": "startWifiScan"}, function(rtnMsg){
                 var wifi = "";
+                if(typeof rtnMsg.msg === "undefined"){
+                  return;
+                }
                 for(var i = 0; i < rtnMsg.msg.length; i++) {
                     wifi += "<option value ='" + rtnMsg.msg[i][0] + "' >";
                     wifi += rtnMsg.msg[i][0];
@@ -244,11 +322,25 @@
             });
         }
 
+        function connectWS() {
+          var url  = "ws://"+getDisplayIP()+":8899/websocket";
+          displayMessage("...conecting: " + url);
+          connect(url);
+        }
 
+        function sendJsonText() {
+          const jsonInput = document.getElementById("jsonInput").value;
+          eb.send_msg(jsonInput,function(rtnMsg){});
+        }
+
+
+        eb = new EveBrain();
         document.getElementById("connectButton").addEventListener("click", USBconnect);
         document.getElementById("wifichkButton").addEventListener("click", wifiCheck);
-        document.getElementById("sendButton").addEventListener("click", sendMessage);
+        document.getElementById("sendButton").addEventListener("click", sendJsonText);
         document.getElementById("wifiButton").addEventListener("click", connectionWizard);
+        document.getElementById("socketButton").addEventListener("click", connectWS);
+        document.getElementById("ipButton").addEventListener("click", getIP);
     </script>
 </body>
 </html>
