@@ -282,7 +282,7 @@ function sendJsonText() {
 function GPIOON() {
   var message = {
     cmd: "gpio_on",
-    arg: 1,
+    arg: 4,
   };
   console.log(message);
   //JSON Command, Function to do on successful completion (where rtnMsg is the returned message of the complete command)
